@@ -1,0 +1,61 @@
+services:
+  crm_backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_backend
+    restart: unless-stopped
+    ports:
+      - "8010:8000"
+    env_file:
+      - ./backend/.env
+    networks:
+      coolify:
+        aliases:
+          - backend
+          - crm_backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.http-0-crm-backend.entryPoints=http"
+      - "traefik.http.routers.http-0-crm-backend.middlewares=redirect-to-https"
+      - "traefik.http.routers.http-0-crm-backend.rule=Host(`api.crm.thesspartners.com`) && PathPrefix(`/`)"
+      - "traefik.http.routers.http-0-crm-backend.service=https-0-crm-backend"
+      - "traefik.http.routers.https-0-crm-backend.entryPoints=https"
+      - "traefik.http.routers.https-0-crm-backend.middlewares=gzip-sse"
+      - "traefik.http.routers.https-0-crm-backend.rule=Host(`api.crm.thesspartners.com`) && PathPrefix(`/`)"
+      - "traefik.http.routers.https-0-crm-backend.service=https-0-crm-backend"
+      - "traefik.http.routers.https-0-crm-backend.tls=true"
+      - "traefik.http.routers.https-0-crm-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.https-0-crm-backend.loadbalancer.server.port=8000"
+
+  crm_web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=https://api.crm.thesspartners.com/api/v1
+    container_name: crm_web
+    restart: unless-stopped
+    ports:
+      - "8011:80"
+    depends_on:
+      - crm_backend
+    networks:
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.http-0-crm-web.entryPoints=http"
+      - "traefik.http.routers.http-0-crm-web.middlewares=redirect-to-https"
+      - "traefik.http.routers.http-0-crm-web.rule=Host(`crm.thesspartners.com`) && PathPrefix(`/`)"
+      - "traefik.http.routers.http-0-crm-web.service=https-0-crm-web"
+      - "traefik.http.routers.https-0-crm-web.entryPoints=https"
+      - "traefik.http.routers.https-0-crm-web.middlewares=gzip-sse"
+      - "traefik.http.routers.https-0-crm-web.rule=Host(`crm.thesspartners.com`) && PathPrefix(`/`)"
+      - "traefik.http.routers.https-0-crm-web.service=https-0-crm-web"
+      - "traefik.http.routers.https-0-crm-web.tls=true"
+      - "traefik.http.routers.https-0-crm-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.https-0-crm-web.loadbalancer.server.port=80"
+
+networks:
+  coolify:
+    external: true
