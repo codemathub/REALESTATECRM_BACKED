@@ -10,22 +10,23 @@ services:
     env_file:
       - ./backend/.env
     networks:
-      coolify:
-        aliases:
-          - backend
-          - crm_backend
+      - coolify
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.middlewares.gzip-sse.compress.excludedcontenttypes=text/event-stream"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
       - "traefik.http.routers.http-0-crm-backend.entryPoints=http"
       - "traefik.http.routers.http-0-crm-backend.middlewares=redirect-to-https"
       - "traefik.http.routers.http-0-crm-backend.rule=Host(`api.crm.thesspartners.com`) && PathPrefix(`/`)"
-      - "traefik.http.routers.http-0-crm-backend.service=https-0-crm-backend"
+      - "traefik.http.routers.http-0-crm-backend.service=http-0-crm-backend"
       - "traefik.http.routers.https-0-crm-backend.entryPoints=https"
       - "traefik.http.routers.https-0-crm-backend.middlewares=gzip-sse"
       - "traefik.http.routers.https-0-crm-backend.rule=Host(`api.crm.thesspartners.com`) && PathPrefix(`/`)"
       - "traefik.http.routers.https-0-crm-backend.service=https-0-crm-backend"
       - "traefik.http.routers.https-0-crm-backend.tls=true"
       - "traefik.http.routers.https-0-crm-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.http-0-crm-backend.loadbalancer.server.port=8000"
       - "traefik.http.services.https-0-crm-backend.loadbalancer.server.port=8000"
 
   crm_web:
@@ -44,18 +45,25 @@ services:
       - coolify
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.middlewares.gzip-sse.compress.excludedcontenttypes=text/event-stream"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
       - "traefik.http.routers.http-0-crm-web.entryPoints=http"
       - "traefik.http.routers.http-0-crm-web.middlewares=redirect-to-https"
       - "traefik.http.routers.http-0-crm-web.rule=Host(`crm.thesspartners.com`) && PathPrefix(`/`)"
-      - "traefik.http.routers.http-0-crm-web.service=https-0-crm-web"
+      - "traefik.http.routers.http-0-crm-web.service=http-0-crm-web"
       - "traefik.http.routers.https-0-crm-web.entryPoints=https"
       - "traefik.http.routers.https-0-crm-web.middlewares=gzip-sse"
       - "traefik.http.routers.https-0-crm-web.rule=Host(`crm.thesspartners.com`) && PathPrefix(`/`)"
       - "traefik.http.routers.https-0-crm-web.service=https-0-crm-web"
       - "traefik.http.routers.https-0-crm-web.tls=true"
       - "traefik.http.routers.https-0-crm-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.http-0-crm-web.loadbalancer.server.port=80"
       - "traefik.http.services.https-0-crm-web.loadbalancer.server.port=80"
 
 networks:
+  default:
+    name: coolify
+    external: true
   coolify:
     external: true
