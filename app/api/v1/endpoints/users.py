@@ -259,11 +259,11 @@ async def list_users(
     ]
 
 
-@router.post("/{user_id}/deactivate", summary="Super Admin and Admin: Deactivate user account")
+@router.post("/{user_id}/deactivate", summary="Super Admin only: Deactivate user account")
 async def deactivate_user(
     user_id: str,
     request: Request,
-    current_user: dict = Depends(require_roles(["super_admin", "admin"])),
+    current_user: dict = Depends(require_roles(["super_admin"])),
 ):
     db = get_database()
     try:
@@ -277,13 +277,6 @@ async def deactivate_user(
 
     if target.get("role") == "super_admin":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate the Super Admin account")
-
-    # Admins can only deactivate executives, not peers or super admins
-    if current_user.get("role") == "admin" and target.get("role") in ["admin", "super_admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin accounts can only deactivate executive accounts.",
-        )
 
     now = datetime.now(timezone.utc)
 
@@ -312,11 +305,11 @@ async def deactivate_user(
     return {"message": f"User account {target['email']} has been deactivated and all active sessions revoked."}
 
 
-@router.post("/{user_id}/reactivate", summary="Super Admin and Admin: Reactivate user account")
+@router.post("/{user_id}/reactivate", summary="Super Admin only: Reactivate user account")
 async def reactivate_user(
     user_id: str,
     request: Request,
-    current_user: dict = Depends(require_roles(["super_admin", "admin"])),
+    current_user: dict = Depends(require_roles(["super_admin"])),
 ):
     db = get_database()
     try:
@@ -327,12 +320,6 @@ async def reactivate_user(
     target = await db.users.find_one({"_id": target_obj_id})
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User account not found")
-
-    if current_user.get("role") == "admin" and target.get("role") in ["admin", "super_admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin accounts can only reactivate executive accounts.",
-        )
 
     now = datetime.now(timezone.utc)
     await db.users.update_one(
@@ -353,11 +340,11 @@ async def reactivate_user(
     return {"message": f"User account {target['email']} has been reactivated."}
 
 
-@router.delete("/{user_id}", summary="Super Admin and Admin: Permanently delete user account")
+@router.delete("/{user_id}", summary="Super Admin only: Permanently delete user account")
 async def delete_user(
     user_id: str,
     request: Request,
-    current_user: dict = Depends(require_roles(["super_admin", "admin"])),
+    current_user: dict = Depends(require_roles(["super_admin"])),
 ):
     db = get_database()
     try:
@@ -371,13 +358,6 @@ async def delete_user(
 
     if target.get("role") == "super_admin":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete the Super Admin account")
-
-    # Admins can only delete executives, not peer admins or super admins
-    if current_user.get("role") == "admin" and target.get("role") in ["admin", "super_admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin accounts can only delete executive accounts.",
-        )
 
     # Clean up associated user records
     await db.sessions.delete_many({"user_id": target_obj_id})
