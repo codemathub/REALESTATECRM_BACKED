@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 # Ensure project root is in sys.path so backend.app.* imports resolve anywhere
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
-    description="Backend API for estateflow Real Estate CRM (Admin, Executive, Super Admin)",
+    description="Backend API for G² Brothers CRM (Admin, Executive, Super Admin)",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc"
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info(
-        f"Starting EstateFlow API on http://{settings.HOST}:{settings.PORT}  "
+        f"Starting G² Brothers CRM API on http://{settings.HOST}:{settings.PORT}  "
         f"(accessible to LAN devices at http://<your-pc-ip>:{settings.PORT})"
     )
     uvicorn.run(

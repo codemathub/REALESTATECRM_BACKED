@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import httpx
 from backend.app.core.config import settings
 
@@ -43,7 +43,7 @@ async def send_resend_email(to_email: str, subject: str, html_content: str) -> d
 async def send_invitation_email(to_email: str, recipient_name: str, role: str, activation_token: str) -> dict:
     """Delivers account activation email with single-use expiring token link."""
     activation_url = f"{settings.WEB_URL}/activate?token={activation_token}&email={to_email}"
-    subject = f"Invitation to join estateflow Real Estate CRM as {role.capitalize()}"
+    subject = f"Invitation to join G² Brothers CRM as {role.capitalize()}"
 
     html = f"""
     <!DOCTYPE html>
@@ -69,7 +69,7 @@ async def send_invitation_email(to_email: str, recipient_name: str, role: str, a
             <p style="font-size: 12px; color: #737487;">If the button does not work, copy and paste this link in your browser:<br><code>{activation_url}</code></p>
             <div class="footer">
                 This single-use activation link expires in 48 hours.<br>
-                estateflow Real Estate CRM • Company Internal System
+                G² Brothers CRM • Company Internal System
             </div>
         </div>
     </body>
@@ -81,7 +81,7 @@ async def send_invitation_email(to_email: str, recipient_name: str, role: str, a
 async def send_password_reset_email(to_email: str, recipient_name: str, reset_token: str) -> dict:
     """Delivers password reset link with single-use expiring token."""
     reset_url = f"{settings.WEB_URL}/reset-password?token={reset_token}&email={to_email}"
-    subject = "Password Reset Request - estateflow Real Estate CRM"
+    subject = "Password Reset Request - G² Brothers CRM"
 
     html = f"""
     <!DOCTYPE html>
@@ -106,7 +106,7 @@ async def send_password_reset_email(to_email: str, recipient_name: str, reset_to
             <a href="{reset_url}" class="btn" style="color: #ffffff;">Set New Password</a>
             <div class="footer">
                 If you did not expect this request, contact your Super Admin immediately.<br>
-                estateflow Real Estate CRM
+                G² Brothers CRM
             </div>
         </div>
     </body>

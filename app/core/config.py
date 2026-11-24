@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     HOST: str = "0.0.0.0"
     API_V1_PREFIX: str = "/api/v1"
-    PROJECT_NAME: str = "estateflow CRM API"
+    PROJECT_NAME: str = "G² Brothers CRM API"
 
     # MongoDB Atlas
     MONGODB_URI: str
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str | None = None
     RESEND_FROM_EMAIL: str = "Mad Ad Theory <onboarding@resend.dev>"
     WEB_URL: str = "http://localhost:5173"
-    MOBILE_SCHEME: str = "estateflow://activate"
+    MOBILE_SCHEME: str = "g2brothers://activate"
 
     # Localization
     COMPANY_TIMEZONE: str = "Asia/Kolkata"
