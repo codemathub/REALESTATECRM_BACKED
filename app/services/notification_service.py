@@ -33,8 +33,13 @@ async def create_in_app_notification(
     result = await db.notifications.insert_one(doc)
     doc["_id"] = result.inserted_id
 
-    # Lookup registered push tokens for user
-    tokens_cursor = db.push_tokens.find({"user_id": str(user_id)})
+    # Lookup registered push tokens for user (support both string and ObjectId)
+    tokens_cursor = db.push_tokens.find({
+        "$or": [
+            {"user_id": str(user_id)},
+            {"user_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else None},
+        ]
+    })
     tokens_docs = await tokens_cursor.to_list(length=10)
     tokens = [t["token"] for t in tokens_docs if t.get("token")]
 
@@ -84,26 +89,34 @@ async def send_expo_push_notifications(
     body: str,
     data: Optional[dict] = None,
 ):
-    """Deliver real push notifications via Expo Push API."""
+    """
+    Deliver real push notifications via Expo Push API.
+    Configured with high priority, default sound, and 'default' channel for Android Heads-Up display.
+    """
     messages = [
         {
             "to": t,
             "sound": "default",
             "title": title,
             "body": body,
+            "channelId": "default",
+            "priority": "high",
+            "_displayInForeground": True,
             "data": data or {},
         }
         for t in tokens
-        if t.startswith("ExponentPushToken") or t.startswith("ExpoPushToken")
+        if t and (t.startswith("ExponentPushToken") or t.startswith("ExpoPushToken"))
     ]
 
     if not messages:
         return
 
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
+        async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(EXPO_PUSH_URL, json=messages)
             if resp.status_code != 200:
                 logger.warning(f"Expo push API returned status {resp.status_code}: {resp.text}")
+            else:
+                logger.info(f"Delivered push notifications to {len(messages)} device(s): {resp.json()}")
     except Exception as e:
         logger.warning(f"Push notification delivery skipped: {e}")

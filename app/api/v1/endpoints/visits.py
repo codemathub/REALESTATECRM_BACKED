@@ -18,7 +18,7 @@ from backend.app.schemas.visit import (
 )
 from backend.app.schemas.deal import DealResponse
 from backend.app.services.sequence_service import generate_visit_id, generate_deal_id
-from backend.app.services.notification_service import broadcast_notification
+from backend.app.services.notification_service import create_in_app_notification, broadcast_notification
 from backend.app.api.v1.endpoints.properties import get_property_doc
 from backend.app.api.v1.endpoints.enquiries import get_enquiry_doc
 
@@ -163,6 +163,28 @@ async def create_visit(
 
     result = await db.visits.insert_one(visit_doc)
     visit_doc["_id"] = result.inserted_id
+
+    # Notification & Push Alert
+    if assigned_to and assigned_to != user_id_str:
+        await create_in_app_notification(
+            db=db,
+            user_id=assigned_to,
+            title=f"Site Visit Assigned: {prop.get('society_name', 'Property')}",
+            body=f"Visit scheduled for {payload.scheduled_at} with {enquiry.get('customer_name', 'client')}.",
+            notification_type="visit_assigned",
+            entity_type="visit",
+            entity_id=visit_id,
+        )
+    elif claim_status == "unclaimed":
+        await broadcast_notification(
+            db=db,
+            target_roles=["executive"],
+            title="Open Visit Claim Available",
+            body=f"New visit at {prop.get('society_name', 'Property')} available in claim pool.",
+            notification_type="visit_claim",
+            entity_type="visit",
+            entity_id=visit_id,
+        )
 
     # Record Audit Event
     await db.activity_events.insert_one({
