@@ -374,6 +374,14 @@ async def get_customer_360(
     for f in followups_docs:
         f["id"] = str(f["_id"])
         f["_id"] = str(f["_id"])
+        resp_id = str(f.get("responsible_user_id") or f.get("created_by") or "")
+        f["responsible_name"] = (
+            user_name_map.get(resp_id)
+            or f.get("responsible_name")
+            or f.get("creator_name")
+            or current_user.get("full_name")
+            or fallback_real_name
+        )
         formatted_followups.append(f)
 
     # 4. Summary Stats

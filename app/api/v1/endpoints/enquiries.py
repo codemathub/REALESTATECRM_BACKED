@@ -571,6 +571,18 @@ async def get_enquiry_timeline(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Enquiry '{enquiry_id}' not found.")
 
+    # Pre-fetch users to resolve real human names (never generic "Field Executive" or "Staff Member")
+    users_list = await db.users.find({}).to_list(200)
+    user_name_map = {}
+    for u in users_list:
+        uid = str(u["_id"])
+        uname = u.get("full_name") or u.get("name") or u.get("email") or ""
+        if uname:
+            user_name_map[uid] = uname
+            if u.get("email"):
+                user_name_map[u["email"]] = uname
+    fallback_user_name = next((u.get("full_name") or u.get("name") for u in users_list if u.get("full_name") or u.get("name")), current_user.get("full_name", "Admin"))
+
     events = []
 
     # 1. Activity events
@@ -584,11 +596,18 @@ async def get_enquiry_timeline(
             f"Changed from {details.get('old_status')} to {details.get('new_status')}" if "new_status" in details else ""
         )
         ts = ensure_utc(act.get("created_at"))
+        act_user_id = str(act.get("user_id") or act.get("actor_id") or "")
+        act_actor = (
+            user_name_map.get(act_user_id)
+            or act.get("actor_name")
+            or current_user.get("full_name")
+            or fallback_user_name
+        )
         events.append({
             "id": str(act["_id"]),
             "type": "activity",
             "event_type": act.get("event_type", "action"),
-            "actor_name": act.get("actor_name") or "Staff Member",
+            "actor_name": act_actor,
             "actor_role": act.get("actor_role") or "staff",
             "title": act.get("event_type", "").replace(".", " ").title(),
             "description": desc or "Action recorded on enquiry",
@@ -607,11 +626,23 @@ async def get_enquiry_timeline(
 
         v_ts = ensure_utc(v.get("created_at") or v.get("scheduled_at"))
         v_sched = ensure_utc(v.get("scheduled_at"))
+        assigned_val = str(v.get("assigned_to") or "")
+        claimed_val = str(v.get("claimed_by") or "")
+        created_val = str(v.get("created_by") or "")
+        v_actor = (
+            user_name_map.get(assigned_val)
+            or user_name_map.get(claimed_val)
+            or user_name_map.get(created_val)
+            or v.get("assigned_name")
+            or v.get("claimed_by_name")
+            or current_user.get("full_name")
+            or fallback_user_name
+        )
         events.append({
             "id": str(v["_id"]),
             "type": "visit",
             "event_type": "site_visit",
-            "actor_name": v.get("assigned_name") or v.get("claimed_by_name") or "Field Executive",
+            "actor_name": v_actor,
             "actor_role": "executive",
             "title": v_title,
             "description": v_desc,
@@ -626,11 +657,19 @@ async def get_enquiry_timeline(
         if f.get("remarks"):
             f_desc += f" | Response: {f.get('remarks')}"
         f_ts = ensure_utc(f.get("created_at") or f.get("scheduled_at"))
+        resp_id = str(f.get("responsible_user_id") or f.get("created_by") or "")
+        f_actor = (
+            user_name_map.get(resp_id)
+            or f.get("responsible_name")
+            or f.get("creator_name")
+            or current_user.get("full_name")
+            or fallback_user_name
+        )
         events.append({
             "id": str(f["_id"]),
             "type": "followup",
             "event_type": "followup_call",
-            "actor_name": f.get("responsible_name") or "Staff Member",
+            "actor_name": f_actor,
             "actor_role": "executive",
             "title": f"Follow-up Call • {f.get('status', '').title()}",
             "description": f_desc,
