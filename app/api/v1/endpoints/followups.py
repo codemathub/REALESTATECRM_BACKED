@@ -8,6 +8,7 @@ from pymongo import ReturnDocument
 
 from backend.app.core.deps import get_current_user
 from backend.app.core.database import get_database
+from backend.app.core.datetime_utils import ensure_utc
 from backend.app.schemas.followup import (
     FollowUpCreate,
     FollowUpComplete,
@@ -46,9 +47,7 @@ async def followup_doc_to_response(db, doc: dict) -> FollowUpResponse:
 
     now = datetime.now(timezone.utc)
     curr_status = doc.get("status", "scheduled")
-    sched_at = doc["scheduled_at"]
-    if sched_at.tzinfo is None:
-        sched_at = sched_at.replace(tzinfo=timezone.utc)
+    sched_at = ensure_utc(doc.get("scheduled_at")) or now
 
     # Dynamic due/overdue indicator if scheduled time is in the past
     if curr_status == "scheduled" and sched_at < now:
@@ -69,12 +68,12 @@ async def followup_doc_to_response(db, doc: dict) -> FollowUpResponse:
         status=curr_status,
         outcome=doc.get("outcome"),
         remarks=doc.get("remarks"),
-        completed_at=doc.get("completed_at"),
+        completed_at=ensure_utc(doc.get("completed_at")),
         reschedule_reason=doc.get("reschedule_reason"),
         cancellation_reason=doc.get("cancellation_reason"),
         created_by=str(doc.get("created_by", "")),
-        created_at=doc.get("created_at", now),
-        updated_at=doc.get("updated_at", now),
+        created_at=ensure_utc(doc.get("created_at")) or now,
+        updated_at=ensure_utc(doc.get("updated_at")) or now,
     )
 
 

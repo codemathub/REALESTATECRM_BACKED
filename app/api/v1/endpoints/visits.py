@@ -7,6 +7,7 @@ from pymongo import ReturnDocument
 
 from backend.app.core.deps import get_current_user, require_admin
 from backend.app.core.database import get_database
+from backend.app.core.datetime_utils import ensure_utc
 from backend.app.schemas.visit import (
     VisitCreate,
     VisitComplete,
@@ -58,18 +59,7 @@ async def visit_doc_to_response(db, doc: dict) -> VisitResponse:
             claimed_by_name = claimed_user.get("full_name") or claimed_user.get("email")
 
     # Timezone normalization: ensure UTC tzinfo so serialization outputs trailing 'Z'
-    scheduled_dt = doc.get("scheduled_at")
-    if isinstance(scheduled_dt, datetime):
-        if scheduled_dt.tzinfo is None:
-            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
-        else:
-            scheduled_dt = scheduled_dt.astimezone(timezone.utc)
-    elif isinstance(scheduled_dt, str) and scheduled_dt:
-        if not scheduled_dt.endswith("Z") and "+" not in scheduled_dt:
-            try:
-                scheduled_dt = datetime.fromisoformat(scheduled_dt).replace(tzinfo=timezone.utc)
-            except Exception:
-                pass
+    scheduled_dt = ensure_utc(doc.get("scheduled_at"))
 
     return VisitResponse(
         id=str(doc["_id"]),
@@ -90,15 +80,15 @@ async def visit_doc_to_response(db, doc: dict) -> VisitResponse:
         claim_status=doc.get("claim_status", "direct_assigned"),
         claimed_by=doc.get("claimed_by"),
         claimed_by_name=claimed_by_name,
-        claimed_at=doc.get("claimed_at"),
+        claimed_at=ensure_utc(doc.get("claimed_at")),
         status=doc.get("status", "scheduled"),
         outcome=doc.get("outcome"),
         remarks=doc.get("remarks"),
         reschedule_reason=doc.get("reschedule_reason"),
         cancellation_reason=doc.get("cancellation_reason"),
         created_by=str(doc.get("created_by", "")),
-        created_at=doc.get("created_at", datetime.now(timezone.utc)),
-        updated_at=doc.get("updated_at", datetime.now(timezone.utc)),
+        created_at=ensure_utc(doc.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=ensure_utc(doc.get("updated_at")) or datetime.now(timezone.utc),
     )
 
 
@@ -135,19 +125,9 @@ async def create_visit(
     user_id_str = str(current_user["_id"])
 
     # 3. Determine assignment & claim status
-    if user_role == "executive":
-        assigned_to = user_id_str
-        claim_status = "direct_assigned"
-    else:
-        # Admin / Super Admin
-        if payload.assigned_to:
-            # Direct assignment
-            assigned_to = payload.assigned_to
-            claim_status = "direct_assigned"
-        else:
-            # Open Pool for claiming
-            assigned_to = None
-            claim_status = "unclaimed"
+    # Any scheduled visit defaults directly to the creator so it immediately appears in their schedule
+    assigned_to = payload.assigned_to or user_id_str
+    claim_status = "direct_assigned"
 
     visit_id = await generate_visit_id(db)
 
@@ -260,7 +240,12 @@ async def list_visits(
         query["assigned_to"] = user_id_str
 
     if status_filter and status_filter.lower() != "all":
-        query["status"] = status_filter.lower()
+        if "," in status_filter:
+            query["status"] = {"$in": [s.strip().lower() for s in status_filter.split(",")]}
+        elif status_filter.lower() == "active":
+            query["status"] = {"$in": ["scheduled", "rescheduled", "in_progress"]}
+        else:
+            query["status"] = status_filter.lower()
 
     if date_filter:
         try:
@@ -420,9 +405,9 @@ async def complete_visit(
         return_document=ReturnDocument.AFTER,
     )
 
-    # Dual Deal Sync: Check if outcome indicates a closed deal (e.g. "Deal Closed", "Rented Out", "Sold")
+    # Dual Deal Sync: Check if outcome indicates a closed deal (e.g. "Deal Closed", "Booked", "Rented Out", "Sold")
     outcome_str = (payload.outcome or "").lower()
-    if any(k in outcome_str for k in ["deal closed", "rented", "sold", "won"]):
+    if any(k in outcome_str for k in ["deal closed", "booked", "closed", "rented", "sold", "won"]):
         enquiry = await get_enquiry_doc(db, doc["enquiry_id"])
         prop = await db.properties.find_one({"property_id": doc["property_id"].upper()})
         if prop and enquiry:

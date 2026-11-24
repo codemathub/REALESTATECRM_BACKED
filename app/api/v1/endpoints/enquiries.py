@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.app.core.deps import get_current_user, require_roles
 from backend.app.core.database import get_database
+from backend.app.core.datetime_utils import ensure_utc
 from backend.app.schemas.enquiry import (
     EnquiryCreate,
     EnquiryUpdate,
@@ -54,14 +55,14 @@ def enquiry_doc_to_response(doc: dict) -> EnquiryResponse:
         responsible_employee_id=doc.get("responsible_employee_id"),
         responsible_employee_name=doc.get("responsible_employee_name"),
         notes=doc.get("notes"),
-        last_followup_at=doc.get("last_followup_at"),
-        next_followup_at=doc.get("next_followup_at"),
+        last_followup_at=ensure_utc(doc.get("last_followup_at")),
+        next_followup_at=ensure_utc(doc.get("next_followup_at")),
         created_by=str(doc.get("created_by", "")),
         created_by_name=doc.get("created_by_name"),
         updated_by=str(doc.get("updated_by", "")) if doc.get("updated_by") else None,
-        created_at=doc.get("created_at") or datetime.now(timezone.utc),
-        updated_at=doc.get("updated_at") or datetime.now(timezone.utc),
-        archived_at=doc.get("archived_at"),
+        created_at=ensure_utc(doc.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=ensure_utc(doc.get("updated_at")) or datetime.now(timezone.utc),
+        archived_at=ensure_utc(doc.get("archived_at")),
     )
 
 
@@ -582,6 +583,7 @@ async def get_enquiry_timeline(
         desc = details.get("reason") or details.get("notes") or (
             f"Changed from {details.get('old_status')} to {details.get('new_status')}" if "new_status" in details else ""
         )
+        ts = ensure_utc(act.get("created_at"))
         events.append({
             "id": str(act["_id"]),
             "type": "activity",
@@ -590,7 +592,7 @@ async def get_enquiry_timeline(
             "actor_role": act.get("actor_role") or "staff",
             "title": act.get("event_type", "").replace(".", " ").title(),
             "description": desc or "Action recorded on enquiry",
-            "timestamp": act.get("created_at"),
+            "timestamp": ts.isoformat() if ts else None,
         })
 
     # 2. Visits linked to this enquiry
@@ -603,6 +605,8 @@ async def get_enquiry_timeline(
         if v.get("remarks"):
             v_desc += f" | Remarks: {v.get('remarks')}"
 
+        v_ts = ensure_utc(v.get("created_at") or v.get("scheduled_at"))
+        v_sched = ensure_utc(v.get("scheduled_at"))
         events.append({
             "id": str(v["_id"]),
             "type": "visit",
@@ -611,8 +615,8 @@ async def get_enquiry_timeline(
             "actor_role": "executive",
             "title": v_title,
             "description": v_desc,
-            "timestamp": v.get("created_at") or v.get("scheduled_at"),
-            "scheduled_at": v.get("scheduled_at"),
+            "timestamp": v_ts.isoformat() if v_ts else None,
+            "scheduled_at": v_sched.isoformat() if v_sched else None,
         })
 
     # 3. Followups linked to this enquiry
@@ -621,6 +625,7 @@ async def get_enquiry_timeline(
         f_desc = f.get("notes", "Follow-up logged")
         if f.get("remarks"):
             f_desc += f" | Response: {f.get('remarks')}"
+        f_ts = ensure_utc(f.get("created_at") or f.get("scheduled_at"))
         events.append({
             "id": str(f["_id"]),
             "type": "followup",
@@ -629,7 +634,7 @@ async def get_enquiry_timeline(
             "actor_role": "executive",
             "title": f"Follow-up Call • {f.get('status', '').title()}",
             "description": f_desc,
-            "timestamp": f.get("created_at") or f.get("scheduled_at"),
+            "timestamp": f_ts.isoformat() if f_ts else None,
         })
 
     # Sort all events chronologically descending (newest first)

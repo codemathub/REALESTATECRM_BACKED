@@ -9,6 +9,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.app.core.deps import get_current_user, require_roles
 from backend.app.core.database import get_database
+from backend.app.core.datetime_utils import ensure_utc
 from backend.app.schemas.property import (
     PropertyCreate,
     PropertyUpdate,
@@ -62,9 +63,9 @@ def property_doc_to_response(doc: dict) -> PropertyResponse:
         created_by=str(doc.get("created_by", "")),
         created_by_name=doc.get("created_by_name"),
         updated_by=str(doc.get("updated_by", "")) if doc.get("updated_by") else None,
-        created_at=doc.get("created_at") or datetime.now(timezone.utc),
-        updated_at=doc.get("updated_at") or datetime.now(timezone.utc),
-        archived_at=doc.get("archived_at"),
+        created_at=ensure_utc(doc.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=ensure_utc(doc.get("updated_at")) or datetime.now(timezone.utc),
+        archived_at=ensure_utc(doc.get("archived_at")),
         archived_by=str(doc.get("archived_by")) if doc.get("archived_by") else None,
     )
 
