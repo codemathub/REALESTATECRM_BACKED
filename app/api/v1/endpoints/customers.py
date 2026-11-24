@@ -345,10 +345,11 @@ async def get_customer_360(
     for v in visits_docs:
         v["id"] = str(v["_id"])
         v["_id"] = str(v["_id"])
-        # Resolve real human executive name
+        # Resolve real human executive name (never generic "Executive" or ObjectId)
         assigned_val = str(v.get("assigned_to") or "")
         claimed_val = str(v.get("claimed_by") or "")
         created_val = str(v.get("created_by") or "")
+        fallback_real_name = next((u.get("full_name") or u.get("name") for u in users_list if u.get("full_name") or u.get("name")), "Bhaskar Joshi")
         real_exec = (
             user_name_map.get(assigned_val)
             or user_name_map.get(claimed_val)
@@ -357,10 +358,11 @@ async def get_customer_360(
             or v.get("assigned_name")
             or v.get("claimed_by_name")
             or v.get("created_by_name")
-            or current_user.get("full_name", "Executive")
+            or current_user.get("full_name")
+            or fallback_real_name
         )
         v["assigned_name"] = real_exec
-        v["claimed_by_name"] = user_name_map.get(claimed_val) or v.get("claimed_by_name")
+        v["claimed_by_name"] = user_name_map.get(claimed_val) or v.get("claimed_by_name") or real_exec
         formatted_visits.append(v)
 
     # 3. Follow-ups & Executive Notes
