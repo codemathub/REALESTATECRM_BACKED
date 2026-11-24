@@ -17,7 +17,7 @@ from backend.app.schemas.enquiry import (
 from backend.app.schemas.deal import DealCloseRequest, EnquiryAbortRequest, DealResponse
 from backend.app.services.property_service import normalize_phone, log_activity
 from backend.app.services.sequence_service import generate_enquiry_id, generate_deal_id
-from backend.app.services.notification_service import broadcast_notification
+from backend.app.services.notification_service import create_in_app_notification, broadcast_notification
 
 
 router = APIRouter()
@@ -77,6 +77,7 @@ async def list_enquiries(
     max_budget: Optional[float] = Query(None, ge=0),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    active_only: Optional[bool] = Query(None, description="Filter only active enquiries"),
     current_user: dict = Depends(get_current_user),
 ):
     """PRD REQ-ENQ-01: Query and filter company customer enquiries."""
@@ -91,6 +92,8 @@ async def list_enquiries(
         query["looking_for"] = looking_for
     if status:
         query["status"] = status
+    elif active_only:
+        query["status"] = {"$nin": ["deal_closed", "aborted", "cancelled", "lost", "archived"]}
     if priority:
         query["priority"] = priority
 
@@ -170,6 +173,17 @@ async def create_enquiry(
 
     result = await db.enquiries.insert_one(doc)
     doc["_id"] = result.inserted_id
+
+    # Broadcast notification to admins and staff
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin", "executive"],
+        title=f"New Enquiry: {customer.get('name')} • {enq_in.looking_for}",
+        body=f"Budget: ₹{enq_in.budget_min:,.0f} - ₹{enq_in.budget_max:,.0f} | Loc: {', '.join(enq_in.preferred_locations[:2]) if enq_in.preferred_locations else 'Any'}",
+        notification_type="lead_assigned",
+        entity_type="enquiry",
+        entity_id=enquiry_id,
+    )
 
     await log_activity(
         db=db,
@@ -540,4 +554,85 @@ async def restore_enquiry(
     )
 
     return enquiry_doc_to_response(updated)
+
+
+@router.get("/{enquiry_id}/timeline")
+async def get_enquiry_timeline(
+    enquiry_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retrieve full chronological action timeline of an enquiry across all staff interactions:
+    Status changes, site visits, follow-up calls, notes, and deal progress.
+    """
+    db = get_database()
+    doc = await get_enquiry_doc(db, enquiry_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Enquiry '{enquiry_id}' not found.")
+
+    events = []
+
+    # 1. Activity events
+    activity_cursor = db.activity_events.find({
+        "entity_type": "enquiry",
+        "entity_id": doc["enquiry_id"],
+    }).sort("created_at", -1).limit(50)
+    for act in await activity_cursor.to_list(length=50):
+        details = act.get("details", {})
+        desc = details.get("reason") or details.get("notes") or (
+            f"Changed from {details.get('old_status')} to {details.get('new_status')}" if "new_status" in details else ""
+        )
+        events.append({
+            "id": str(act["_id"]),
+            "type": "activity",
+            "event_type": act.get("event_type", "action"),
+            "actor_name": act.get("actor_name") or "Staff Member",
+            "actor_role": act.get("actor_role") or "staff",
+            "title": act.get("event_type", "").replace(".", " ").title(),
+            "description": desc or "Action recorded on enquiry",
+            "timestamp": act.get("created_at"),
+        })
+
+    # 2. Visits linked to this enquiry
+    visits_cursor = db.visits.find({"enquiry_id": doc["enquiry_id"]}).sort("created_at", -1).limit(20)
+    for v in await visits_cursor.to_list(length=20):
+        v_title = f"Site Visit #{v.get('visit_id')} • {v.get('property_society') or v.get('property_id')}"
+        v_desc = f"Status: {v.get('status', '').title()}"
+        if v.get("outcome"):
+            v_desc += f" | Outcome: {v.get('outcome')}"
+        if v.get("remarks"):
+            v_desc += f" | Remarks: {v.get('remarks')}"
+
+        events.append({
+            "id": str(v["_id"]),
+            "type": "visit",
+            "event_type": "site_visit",
+            "actor_name": v.get("assigned_name") or v.get("claimed_by_name") or "Field Executive",
+            "actor_role": "executive",
+            "title": v_title,
+            "description": v_desc,
+            "timestamp": v.get("created_at") or v.get("scheduled_at"),
+            "scheduled_at": v.get("scheduled_at"),
+        })
+
+    # 3. Followups linked to this enquiry
+    followups_cursor = db.followups.find({"enquiry_id": doc["enquiry_id"]}).sort("created_at", -1).limit(20)
+    for f in await followups_cursor.to_list(length=20):
+        f_desc = f.get("notes", "Follow-up logged")
+        if f.get("remarks"):
+            f_desc += f" | Response: {f.get('remarks')}"
+        events.append({
+            "id": str(f["_id"]),
+            "type": "followup",
+            "event_type": "followup_call",
+            "actor_name": f.get("responsible_name") or "Staff Member",
+            "actor_role": "executive",
+            "title": f"Follow-up Call • {f.get('status', '').title()}",
+            "description": f_desc,
+            "timestamp": f.get("created_at") or f.get("scheduled_at"),
+        })
+
+    # Sort all events chronologically descending (newest first)
+    events.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
+    return {"enquiry_id": doc["enquiry_id"], "events": events}
 

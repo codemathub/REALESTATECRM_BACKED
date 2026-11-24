@@ -57,6 +57,20 @@ async def visit_doc_to_response(db, doc: dict) -> VisitResponse:
         if claimed_user:
             claimed_by_name = claimed_user.get("full_name") or claimed_user.get("email")
 
+    # Timezone normalization: ensure UTC tzinfo so serialization outputs trailing 'Z'
+    scheduled_dt = doc.get("scheduled_at")
+    if isinstance(scheduled_dt, datetime):
+        if scheduled_dt.tzinfo is None:
+            scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+        else:
+            scheduled_dt = scheduled_dt.astimezone(timezone.utc)
+    elif isinstance(scheduled_dt, str) and scheduled_dt:
+        if not scheduled_dt.endswith("Z") and "+" not in scheduled_dt:
+            try:
+                scheduled_dt = datetime.fromisoformat(scheduled_dt).replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+
     return VisitResponse(
         id=str(doc["_id"]),
         visit_id=doc["visit_id"],
@@ -70,7 +84,7 @@ async def visit_doc_to_response(db, doc: dict) -> VisitResponse:
         property_location=doc.get("property_location", ""),
         property_amount=float(doc.get("property_amount", 0.0)),
         property_transaction_type=doc.get("property_transaction_type", "rent"),
-        scheduled_at=doc["scheduled_at"],
+        scheduled_at=scheduled_dt,
         assigned_to=doc.get("assigned_to"),
         assigned_name=assigned_name,
         claim_status=doc.get("claim_status", "direct_assigned"),
@@ -137,6 +151,8 @@ async def create_visit(
 
     visit_id = await generate_visit_id(db)
 
+    scheduled_utc = payload.scheduled_at.replace(tzinfo=timezone.utc) if payload.scheduled_at.tzinfo is None else payload.scheduled_at.astimezone(timezone.utc)
+
     visit_doc = {
         "visit_id": visit_id,
         "customer_id": enquiry["customer_id"],
@@ -149,7 +165,7 @@ async def create_visit(
         "property_location": prop.get("location", ""),
         "property_amount": float(prop.get("expected_amount", 0.0)),
         "property_transaction_type": prop.get("transaction_type", "rent"),
-        "scheduled_at": payload.scheduled_at,
+        "scheduled_at": scheduled_utc,
         "assigned_to": assigned_to,
         "claim_status": claim_status,
         "claimed_by": None,
@@ -248,9 +264,12 @@ async def list_visits(
 
     if date_filter:
         try:
-            start_date = datetime.strptime(date_filter, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            end_date = start_date + timedelta(days=1)
-            query["scheduled_at"] = {"$gte": start_date, "$lt": end_date}
+            start_date = datetime.strptime(date_filter, "%Y-%m-%d").replace(tzinfo=timezone.utc) - timedelta(hours=12)
+            end_date = start_date + timedelta(hours=36)
+            query["$or"] = [
+                {"scheduled_at": {"$gte": start_date, "$lt": end_date}},
+                {"scheduled_at": {"$regex": f"^{date_filter}"}},
+            ]
         except ValueError:
             pass
 
@@ -359,6 +378,16 @@ async def claim_visit(
         "created_at": now,
     })
 
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin"],
+        title=f"Visit Claimed: {doc.get('property_society') or doc.get('property_id')}",
+        body=f"Claimed by {current_user.get('full_name', 'Executive')} for {doc.get('customer_name')}.",
+        notification_type="visit_claimed",
+        entity_type="visit",
+        entity_id=doc["visit_id"],
+    )
+
     return await visit_doc_to_response(db, updated_doc)
 
 
@@ -391,6 +420,32 @@ async def complete_visit(
         return_document=ReturnDocument.AFTER,
     )
 
+    # Dual Deal Sync: Check if outcome indicates a closed deal (e.g. "Deal Closed", "Rented Out", "Sold")
+    outcome_str = (payload.outcome or "").lower()
+    if any(k in outcome_str for k in ["deal closed", "rented", "sold", "won"]):
+        enquiry = await get_enquiry_doc(db, doc["enquiry_id"])
+        prop = await db.properties.find_one({"property_id": doc["property_id"].upper()})
+        if prop and enquiry:
+            trans_type = enquiry.get("transaction_type", "rent").lower()
+            target_prop_status = "rented" if trans_type == "rent" else "sold"
+            await db.properties.update_one(
+                {"property_id": prop["property_id"]},
+                {"$set": {"status": target_prop_status, "closed_deal_at": now, "closed_enquiry_id": enquiry["enquiry_id"], "updated_at": now}},
+            )
+            await db.enquiries.update_one(
+                {"enquiry_id": enquiry["enquiry_id"]},
+                {"$set": {"status": "deal_closed", "closed_at": now, "closed_property_id": prop["property_id"], "final_remarks": payload.remarks or payload.outcome, "updated_at": now}},
+            )
+            await broadcast_notification(
+                db=db,
+                target_roles=["super_admin", "admin"],
+                title="Field Visit Converted to Deal! 🏆",
+                body=f"Visit #{doc['visit_id']} outcome: {payload.outcome}. Property {prop['property_id']} marked as {target_prop_status.capitalize()}.",
+                notification_type="deal_closed",
+                entity_type="visit",
+                entity_id=doc["visit_id"],
+            )
+
     await db.activity_events.insert_one({
         "event_type": "visit.completed",
         "entity_type": "visit",
@@ -400,6 +455,16 @@ async def complete_visit(
         "details": {"outcome": payload.outcome, "remarks": payload.remarks},
         "created_at": now,
     })
+
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin"],
+        title=f"Visit Completed: {doc.get('property_society') or doc.get('property_id')}",
+        body=f"Completed by {current_user.get('full_name', 'Executive')}. Outcome: {payload.outcome or 'Completed'}.",
+        notification_type="visit_completed",
+        entity_type="visit",
+        entity_id=doc["visit_id"],
+    )
 
     return await visit_doc_to_response(db, updated_doc)
 
@@ -419,11 +484,13 @@ async def reschedule_visit(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Visit '{visit_id}' not found.")
 
+    new_sched_utc = payload.new_scheduled_at.replace(tzinfo=timezone.utc) if payload.new_scheduled_at.tzinfo is None else payload.new_scheduled_at.astimezone(timezone.utc)
+
     updated_doc = await db.visits.find_one_and_update(
         {"_id": doc["_id"]},
         {
             "$set": {
-                "scheduled_at": payload.new_scheduled_at,
+                "scheduled_at": new_sched_utc,
                 "reschedule_reason": payload.reason,
                 "status": "rescheduled",
                 "updated_at": now,
@@ -444,6 +511,16 @@ async def reschedule_visit(
         },
         "created_at": now,
     })
+
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin", "executive"],
+        title=f"Visit Rescheduled: {doc.get('property_society') or doc.get('property_id')}",
+        body=f"Visit #{doc['visit_id']} rescheduled. Reason: {payload.reason}",
+        notification_type="visit_rescheduled",
+        entity_type="visit",
+        entity_id=doc["visit_id"],
+    )
 
     return await visit_doc_to_response(db, updated_doc)
 
@@ -484,6 +561,16 @@ async def cancel_visit(
         "details": {"reason": payload.reason},
         "created_at": now,
     })
+
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin", "executive"],
+        title=f"Visit Cancelled: {doc.get('property_society') or doc.get('property_id')}",
+        body=f"Visit #{doc['visit_id']} cancelled. Reason: {payload.reason}",
+        notification_type="visit_cancelled",
+        entity_type="visit",
+        entity_id=doc["visit_id"],
+    )
 
     return await visit_doc_to_response(db, updated_doc)
 
@@ -537,6 +624,16 @@ async def reassign_visit(
         "details": {"reassigned_to": str(target_user["_id"])},
         "created_at": now,
     })
+
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin"],
+        title=f"Visit Claimed: {doc.get('property_society') or doc.get('property_id')}",
+        body=f"Claimed by {current_user.get('full_name', 'Executive')} for {doc.get('customer_name')}.",
+        notification_type="visit_claimed",
+        entity_type="visit",
+        entity_id=doc["visit_id"],
+    )
 
     return await visit_doc_to_response(db, updated_doc)
 
@@ -747,6 +844,16 @@ async def abort_deal_from_visit(
         "details": {"visit_id": visit["visit_id"], "reason": reason},
         "created_at": now,
     })
+
+    await broadcast_notification(
+        db=db,
+        target_roles=["super_admin", "admin"],
+        title=f"Visit Claimed: {doc.get('property_society') or doc.get('property_id')}",
+        body=f"Claimed by {current_user.get('full_name', 'Executive')} for {doc.get('customer_name')}.",
+        notification_type="visit_claimed",
+        entity_type="visit",
+        entity_id=doc["visit_id"],
+    )
 
     return await visit_doc_to_response(db, updated_doc)
 
