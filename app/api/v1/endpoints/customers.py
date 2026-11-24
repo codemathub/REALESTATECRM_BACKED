@@ -287,6 +287,20 @@ async def get_customer_360(
     phone = doc.get("primary_phone")
     phone_norm = doc.get("primary_phone_normalized")
 
+    # Pre-fetch system users to resolve actual human names and roles (never generic placeholders)
+    users_list = await db.users.find({}).to_list(200)
+    user_name_map = {}
+    user_role_map = {}
+    for u in users_list:
+        uid = str(u["_id"])
+        uname = u.get("full_name") or u.get("name") or u.get("email") or "Executive"
+        urole = u.get("role", "executive")
+        user_name_map[uid] = uname
+        user_role_map[uid] = urole
+        if u.get("email"):
+            user_name_map[u["email"]] = uname
+            user_role_map[u["email"]] = urole
+
     # 1. Linked Enquiries
     enq_query = {"$or": [{"customer_id": cid}, {"customer_id": str(doc["_id"])}]}
     if phone_norm:
@@ -298,6 +312,12 @@ async def get_customer_360(
     for eq in enquiries_docs:
         eq["id"] = str(eq["_id"])
         eq["_id"] = str(eq["_id"])
+        # Resolve real creator name & role ("who added this requirement")
+        creator_id = str(eq.get("created_by") or eq.get("assigned_to") or "")
+        creator_name = user_name_map.get(creator_id) or eq.get("created_by_name") or eq.get("creator_name") or current_user.get("full_name", "Admin")
+        creator_role = user_role_map.get(creator_id) or eq.get("created_by_role") or "executive"
+        eq["created_by_name"] = creator_name
+        eq["created_by_role"] = creator_role
         formatted_enquiries.append(eq)
 
         # Get matching properties for active enquiries
@@ -325,6 +345,22 @@ async def get_customer_360(
     for v in visits_docs:
         v["id"] = str(v["_id"])
         v["_id"] = str(v["_id"])
+        # Resolve real human executive name
+        assigned_val = str(v.get("assigned_to") or "")
+        claimed_val = str(v.get("claimed_by") or "")
+        created_val = str(v.get("created_by") or "")
+        real_exec = (
+            user_name_map.get(assigned_val)
+            or user_name_map.get(claimed_val)
+            or user_name_map.get(created_val)
+            or v.get("agent_name")
+            or v.get("assigned_name")
+            or v.get("claimed_by_name")
+            or v.get("created_by_name")
+            or current_user.get("full_name", "Executive")
+        )
+        v["assigned_name"] = real_exec
+        v["claimed_by_name"] = user_name_map.get(claimed_val) or v.get("claimed_by_name")
         formatted_visits.append(v)
 
     # 3. Follow-ups & Executive Notes
