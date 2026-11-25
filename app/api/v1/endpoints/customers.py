@@ -268,6 +268,20 @@ async def get_customer(
     }
 
 
+def serialize_mongo_data(item):
+    if item is None:
+        return None
+    if isinstance(item, ObjectId):
+        return str(item)
+    if isinstance(item, datetime):
+        return item.isoformat()
+    if isinstance(item, dict):
+        return {k: serialize_mongo_data(v) for k, v in item.items()}
+    if isinstance(item, list):
+        return [serialize_mongo_data(x) for x in item]
+    return item
+
+
 @router.get("/{customer_id}/360", summary="Customer 360-Degree Panoramic Dossier")
 async def get_customer_360(
     customer_id: str,
@@ -391,7 +405,7 @@ async def get_customer_360(
 
     customer_resp = customer_doc_to_response(doc, enquiries_count=len(formatted_enquiries))
 
-    return {
+    return serialize_mongo_data({
         "customer": customer_resp.model_dump(),
         "enquiries": formatted_enquiries,
         "visits": formatted_visits,
@@ -406,7 +420,7 @@ async def get_customer_360(
             "pending_followups": pending_followups_count,
             "matched_properties_count": len(matched_properties_dict),
         },
-    }
+    })
 
 
 @router.patch("/{customer_id}", response_model=CustomerResponse)

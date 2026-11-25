@@ -25,10 +25,15 @@ router = APIRouter()
 
 
 async def get_enquiry_doc(db, identifier: str) -> Optional[dict]:
-    query = {"enquiry_id": identifier.upper()}
-    if ObjectId.is_valid(identifier):
-        query = {"$or": [{"enquiry_id": identifier.upper()}, {"_id": ObjectId(identifier)}]}
-    return await db.enquiries.find_one(query)
+    clean = str(identifier).strip()
+    query_list = [
+        {"enquiry_id": clean},
+        {"enquiry_id": clean.upper()},
+        {"enquiry_id": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
+    ]
+    if ObjectId.is_valid(clean):
+        query_list.append({"_id": ObjectId(clean)})
+    return await db.enquiries.find_one({"$or": query_list})
 
 
 def enquiry_doc_to_response(doc: dict) -> EnquiryResponse:
@@ -147,10 +152,15 @@ async def create_enquiry(
     db = get_database()
 
     # Look up customer
-    cust_query = {"customer_id": enq_in.customer_id.upper()}
-    if ObjectId.is_valid(enq_in.customer_id):
-        cust_query = {"$or": [{"customer_id": enq_in.customer_id.upper()}, {"_id": ObjectId(enq_in.customer_id)}]}
-    customer = await db.customers.find_one(cust_query)
+    clean_cid = str(enq_in.customer_id).strip()
+    cust_query_list = [
+        {"customer_id": clean_cid},
+        {"customer_id": clean_cid.upper()},
+        {"customer_id": {"$regex": f"^{re.escape(clean_cid)}$", "$options": "i"}},
+    ]
+    if ObjectId.is_valid(clean_cid):
+        cust_query_list.append({"_id": ObjectId(clean_cid)})
+    customer = await db.customers.find_one({"$or": cust_query_list})
     if not customer:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -162,7 +172,7 @@ async def create_enquiry(
 
     doc = enq_in.model_dump()
     doc["enquiry_id"] = enquiry_id
-    doc["customer_id"] = customer["customer_id"]
+    doc["customer_id"] = customer.get("customer_id") or str(customer["_id"])
     doc["customer_name"] = customer["name"]
     doc["customer_phone"] = customer["primary_phone"]
     doc["customer_phone_normalized"] = customer.get("primary_phone_normalized", normalize_phone(customer["primary_phone"]))

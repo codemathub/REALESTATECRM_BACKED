@@ -26,11 +26,16 @@ router = APIRouter()
 
 
 async def get_property_doc(db, property_id: str):
-    """Fetch property by 8-char property_id or MongoDB _id."""
-    query = {"property_id": property_id.upper()}
-    if ObjectId.is_valid(property_id):
-        query = {"$or": [{"property_id": property_id.upper()}, {"_id": ObjectId(property_id)}]}
-    return await db.properties.find_one(query)
+    """Fetch property by property_id or MongoDB _id."""
+    clean = str(property_id).strip()
+    query_list = [
+        {"property_id": clean},
+        {"property_id": clean.upper()},
+        {"property_id": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
+    ]
+    if ObjectId.is_valid(clean):
+        query_list.append({"_id": ObjectId(clean)})
+    return await db.properties.find_one({"$or": query_list})
 
 
 def property_doc_to_response(doc: dict) -> PropertyResponse:

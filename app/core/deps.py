@@ -122,7 +122,7 @@ async def log_audit_event(
     """Writes an immutable, append-only record to activity_events."""
     db = get_database()
     event_doc = {
-        "actor_id": ObjectId(actor_id) if actor_id else None,
+        "actor_id": ObjectId(actor_id) if actor_id and ObjectId.is_valid(str(actor_id)) else None,
         "actor_role": actor_role,
         "event_type": event_type,
         "entity_type": entity_type,
